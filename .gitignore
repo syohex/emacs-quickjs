@@ -1,0 +1,7 @@
+.vscode/
+.idea/
+*~
+*.o
+*.so
+*.a
+.obj/
