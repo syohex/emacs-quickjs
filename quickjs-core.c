@@ -27,6 +27,11 @@
 
 int plugin_is_GPL_compatible;
 
+struct quickjs_context {
+    JSRuntime *runtime;
+    JSContext *context;
+};
+
 static char *retrieve_string(emacs_env *env, emacs_value str, ptrdiff_t *size) {
     *size = 0;
 
@@ -119,7 +124,119 @@ static emacs_value quickjs_to_elisp(emacs_env *env, JSContext *context, JSValue 
     return env->intern(env, "nil");
 }
 
-static emacs_value Fquickjs_core_eval(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data) {
+static bool eq_type(emacs_env *env, emacs_value type, const char *type_str) {
+    return env->eq(env, type, env->intern(env, type_str));
+}
+
+static JSValueConst elisp_to_quickjs(emacs_env *env, JSContext *context, emacs_value value) {
+    emacs_value type = env->type_of(env, value);
+    if (eq_type(env, type, "integer")) {
+        return JS_MKVAL(JS_TAG_INT, env->extract_integer(env, value));
+    } else if (eq_type(env, type, "float")) {
+        return JS_MKVAL(JS_TAG_FLOAT64, env->extract_float(env, value));
+    } else if (eq_type(env, type, "string")) {
+        ptrdiff_t size = 0;
+        env->copy_string_contents(env, value, NULL, &size);
+        char *str = malloc(size);
+        env->copy_string_contents(env, value, str, &size);
+        JSValueConst ret = JS_NewString(context, str);
+        free(str);
+        return ret;
+    } else if (eq_type(env, type, "vector")) {
+        JSValue array = JS_NewArray(context);
+        ptrdiff_t size = env->vec_size(env, value);
+        for (ptrdiff_t i = 0; i < size; ++i) {
+            JSValueConst elem = elisp_to_quickjs(env, context, env->vec_get(env, value, i));
+            JS_SetPropertyInt64(context, array, i, elem);
+        }
+
+        return array;
+    } else if (env->eq(env, value, env->intern(env, "t"))) {
+        // XXX false??
+        return JS_MKVAL(JS_TAG_BOOL, 1);
+    } else {
+        // object unsuppoerted yet
+        return JS_UNDEFINED;
+    }
+}
+
+static void quickjs_context_free(void *arg) {
+    struct quickjs_context *js_context = (struct quickjs_context *)arg;
+    JS_FreeContext(js_context->context);
+    JS_FreeRuntime(js_context->runtime);
+}
+
+static emacs_value Fquickjs_make_context(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data) {
+    JSRuntime *runtime = JS_NewRuntime();
+    JSContext *context = JS_NewContext(runtime);
+
+    struct quickjs_context *js_context = malloc(sizeof(struct quickjs_context));
+    if (context == NULL) {
+        return env->intern(env, "nil");
+    }
+
+    js_context->runtime = runtime;
+    js_context->context = context;
+
+    return env->make_user_ptr(env, quickjs_context_free, js_context);
+}
+
+static emacs_value Fquickjs_eval_with_context(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data) {
+    struct quickjs_context *js_context = env->get_user_ptr(env, args[0]);
+
+    ptrdiff_t size;
+    char *code = retrieve_string(env, args[1], &size);
+    if (code == NULL) {
+        return env->intern(env, "nil");
+    }
+
+    JSValue value = JS_Eval(js_context->context, code, size - 1, "<input>", JS_EVAL_FLAG_STRICT);
+    free(code);
+
+    emacs_value ret = quickjs_to_elisp(env, js_context->context, value);
+    JS_FreeValue(js_context->context, value);
+    return ret;
+}
+
+static emacs_value Fquickjs_call(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data) {
+    struct quickjs_context *js_context = env->get_user_ptr(env, args[0]);
+
+    ptrdiff_t size;
+    char *func_name = retrieve_string(env, args[1], &size);
+    if (func_name == NULL) {
+        return env->intern(env, "nil");
+    }
+
+    JSValue global = JS_GetGlobalObject(js_context->context);
+    JSValue func = JS_GetPropertyStr(js_context->context, global, func_name);
+    free(func_name);
+
+    JSValueConst *js_args = NULL;
+    ptrdiff_t args_size = env->vec_size(env, args[2]);
+    if (args_size > 0) {
+        js_args = malloc(args_size * sizeof(JSValueConst));
+        for (ptrdiff_t i = 0; i < args_size; ++i) {
+            js_args[i] = elisp_to_quickjs(env, js_context->context, env->vec_get(env, args[2], i));
+        }
+    }
+
+    JSValue value = JS_Call(js_context->context, func, JS_NULL, args_size, js_args);
+
+    if (js_args != NULL) {
+        for (ptrdiff_t i = 0; i < nargs - 2; ++i) {
+            JS_FreeValue(js_context->context, js_args[i]);
+        }
+        free(js_args);
+    }
+
+    emacs_value ret = quickjs_to_elisp(env, js_context->context, value);
+    JS_FreeValue(js_context->context, value);
+    JS_FreeValue(js_context->context, func);
+    JS_FreeValue(js_context->context, global);
+    return ret;
+}
+
+static emacs_value Fquickjs_eval(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data) {
     ptrdiff_t size;
     char *code = retrieve_string(env, args[0], &size);
     if (code == NULL) {
@@ -163,7 +280,11 @@ int emacs_module_init(struct emacs_runtime *ert) {
 
 #define DEFUN(lsym, csym, amin, amax, doc, data) bind_function(env, lsym, env->make_function(env, amin, amax, csym, doc, data))
 
-    DEFUN("quickjs-core-eval", Fquickjs_core_eval, 1, 1, "eval string as JavaScript", NULL);
+    DEFUN("quickjs-core-make-context", Fquickjs_make_context, 0, 0, "make quickJS context", NULL);
+    DEFUN("quickjs-core-eval-with-context", Fquickjs_eval_with_context, 2, 2, "eval string with context", NULL);
+    DEFUN("quickjs-core-call", Fquickjs_call, 3, 3, "call function with context", NULL);
+
+    DEFUN("quickjs-core-eval", Fquickjs_eval, 1, 1, "eval string as JavaScript", NULL);
 
 #undef DEFUN
 

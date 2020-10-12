@@ -29,6 +29,16 @@
 (defun quickjs-eval (str)
   (quickjs-core-eval str))
 
+;;;###autoload
+(defun quickjs-make-context ()
+  (quickjs-core-make-context))
+
+(defun quickjs-eval-with-context (ctx str)
+  (quickjs-core-eval-with-context ctx str))
+
+(defun quickjs-call (ctx func &rest args)
+  (quickjs-core-call ctx func (vconcat args)))
+
 (provide 'quickjs)
 
 ;;; quickjs.el ends here
