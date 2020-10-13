@@ -1,10 +1,8 @@
-;;; quickjs.el --- quickjs for Emacs Lisp
+;;; test-quickjs.el --- Test for quickjs.el -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2020 by Shohei YOSHIDA
 
 ;; Author: Shohei YOSHIDA <syohex@gmail.com>
-;; URL: https://github.com/syohex/emacs-quickjs
-;; Version: 0.01
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -23,22 +21,37 @@
 
 ;;; Code:
 
-(require 'quickjs-core)
+(require 'ert)
+(require 'quickjs)
 
-;;;###autoload
-(defun quickjs-eval (str)
-  (quickjs-core-eval str))
+(ert-deftest eval ()
+  "Eval string as JavaScript code"
+  (let ((got (quickjs-eval "
+function add(a, b) {
+    return a + b;
+}
 
-;;;###autoload
-(defun quickjs-make-context ()
-  (quickjs-core-make-context))
+add(10, 32);
+")))
+    (should (= got 42)))
 
-(defun quickjs-eval-with-context (ctx str)
-  (quickjs-core-eval-with-context ctx str))
+  (let ((got (quickjs-eval "
+const arr = [4, 3, 2, 1];
+arr.sort((a, b) => a - b);
+arr;
+")))
+    (should (equal got [1 2 3 4]))))
 
-(defun quickjs-call (ctx func &rest args)
-  (quickjs-core-call ctx (symbol-name func) (vconcat args)))
+(ert-deftest eval-with-context ()
+  "Eval with context"
+  (let* ((ctx (quickjs-make-context))
+         (_ (quickjs-eval-with-context
+             ctx
+             "
+function concat(a, b) {
+  return `${a}${b}`;
+}
+")))
+    (should (string= (quickjs-call ctx 'concat "He" "llo") "Hello"))))
 
-(provide 'quickjs)
-
-;;; quickjs.el ends here
+;;; test-quickjs.el ends here
