@@ -7,7 +7,7 @@ CPPFLAGS = -I$(EMACS_ROOT)/src -Ideps
 CFLAGS = -O2 -std=gnu99 -ggdb3 -Wall -fPIC $(CPPFLAGS)
 LDFLAGS =
 
-.PHONY : clean format
+.PHONY : test clean format
 
 all: quickjs-core.so
 
@@ -19,6 +19,11 @@ quickjs-core.o: quickjs-core.c
 
 deps/quickjs/libquickjs.a:
 	(cd deps/quickjs && make libquickjs.a)
+
+test:
+	$(EMACS) -Q -batch -L . \
+		-l test/test-quickjs.el \
+		-f ert-run-tests-batch-and-exit
 
 format:
 	-clang-format -i quickjs-core.c

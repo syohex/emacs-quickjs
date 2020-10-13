@@ -41,7 +41,7 @@ function hello(name) {
 }
 ")))
   ;; call JavaScript function with Emacs Lisp values
-  (quickjs-call ctx "hello" "Taro")) ;; => hello Taro
+  (quickjs-call ctx 'hello "Taro")) ;; => hello Taro
 ```
 
 ## License
